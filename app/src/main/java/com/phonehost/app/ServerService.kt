@@ -34,7 +34,11 @@ class ServerService : Service() {
 
     @SuppressLint("WakelockTimeout", "Deprecation")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val port = Prefs.port(this)
+        var port = Prefs.port(this)
+        if (port == Prefs.PHP_PORT) {
+            port = 8080
+            Prefs.setPort(this, port)
+        }
         createChannel()
         val notif = buildNotification(port)
         if (Build.VERSION.SDK_INT >= 34) {
@@ -53,7 +57,12 @@ class ServerService : Service() {
             lastError = null
         } catch (e: Exception) {
             running = false
-            lastError = "Server start failed: " + e.message
+            val m = e.message ?: e.javaClass.simpleName
+            lastError = if (m.contains("EADDRINUSE") || m.contains("in use")) {
+                "Port $port is already in use. Type another port (example 3266) and tap Start."
+            } else {
+                "Server start failed: $m"
+            }
             stopSelf()
             return START_NOT_STICKY
         }
@@ -78,7 +87,9 @@ class ServerService : Service() {
         server = null
         running = false
         wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
         wifiLock?.let { if (it.isHeld) it.release() }
+        wifiLock = null
         super.onDestroy()
     }
 
