@@ -1,7 +1,11 @@
 package com.phonehost.app
 
 import android.annotation.SuppressLint
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -15,8 +19,12 @@ import androidx.core.app.ServiceCompat
 class ServerService : Service() {
 
     companion object {
-        @Volatile var running = false
-        @Volatile var lastError: String? = null
+        @Volatile
+        var running = false
+
+        @Volatile
+        var lastError: String? = null
+
         private const val CHANNEL = "phonehost_server"
     }
 
@@ -38,23 +46,29 @@ class ServerService : Service() {
         SiteManager.ensureDefault(this)
         try {
             server?.stop()
-            server = WebServer(SiteManager.www(this), port).also { it.start() }
+            val s = WebServer(SiteManager.www(this), port, applicationContext)
+            s.start()
+            server = s
             running = true
             lastError = null
         } catch (e: Exception) {
             running = false
-            lastError = "Server start failed: ${e.message}"
+            lastError = "Server start failed: " + e.message
             stopSelf()
             return START_NOT_STICKY
         }
 
-        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
         if (wakeLock == null) {
-            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phonehost:server").apply { acquire() }
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "phonehost:server")
+            wl.acquire()
+            wakeLock = wl
         }
-        val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
         if (wifiLock == null) {
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "phonehost:wifi").apply { acquire() }
+            val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            val wfl = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "phonehost:wifi")
+            wfl.acquire()
+            wifiLock = wfl
         }
         return START_STICKY
     }
@@ -73,7 +87,9 @@ class ServerService : Service() {
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= 26) {
             val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(NotificationChannel(CHANNEL, "Server status", NotificationManager.IMPORTANCE_LOW))
+            nm.createNotificationChannel(
+                NotificationChannel(CHANNEL, "Server status", NotificationManager.IMPORTANCE_LOW)
+            )
         }
     }
 
@@ -84,7 +100,7 @@ class ServerService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle("PhoneHost running")
+            .setContentTitle("PhoneHost is running")
             .setContentText("Serving your site on port $port")
             .setContentIntent(pi)
             .setOngoing(true)
