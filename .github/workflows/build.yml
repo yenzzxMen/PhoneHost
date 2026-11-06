@@ -3,7 +3,6 @@ name: Build APK
 on:
   push:
     branches: [main]
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -26,11 +25,8 @@ jobs:
 
       - name: Set version
         run: |
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            echo "VERSION_NAME=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
-          else
-            echo "VERSION_NAME=0.0.${GITHUB_RUN_NUMBER}-dev" >> $GITHUB_ENV
-          fi
+          echo "VERSION_NAME=1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
+          echo "TAG_NAME=v1.0.${GITHUB_RUN_NUMBER}" >> $GITHUB_ENV
 
       - name: Build release APK
         run: gradle assembleRelease --no-daemon
@@ -44,8 +40,9 @@ jobs:
           path: PhoneHost.apk
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           files: PhoneHost.apk
           generate_release_notes: true
