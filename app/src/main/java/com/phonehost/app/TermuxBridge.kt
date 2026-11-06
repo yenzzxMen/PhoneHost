@@ -13,6 +13,7 @@ import android.os.Build
 object TermuxBridge {
 
     const val SETUP_CMD = "pkg update -y && pkg install -y python cloudflared"
+    const val PHP_SETUP_CMD = "pkg update -y && pkg install -y php curl unzip"
 
     fun isInstalled(ctx: Context): Boolean {
         return try {
@@ -53,5 +54,15 @@ object TermuxBridge {
         } else {
             "cloudflared tunnel run --token $token"
         }
+    }
+
+    /** Downloads the site from the app (localhost only), unzips it in Termux and starts PHP. */
+    fun phpCmd(appPort: Int, token: String, phpPort: Int, overwrite: Boolean): String {
+        val flag = if (overwrite) "-o" else "-n"
+        return "curl -fs \"http://127.0.0.1:$appPort/__phonehost_sync?token=$token\" -o ~/site.zip" +
+            " && mkdir -p ~/phonehost-site" +
+            " && unzip $flag -q ~/site.zip -d ~/phonehost-site" +
+            " && cd ~/phonehost-site" +
+            " && php -S 127.0.0.1:$phpPort"
     }
 }
