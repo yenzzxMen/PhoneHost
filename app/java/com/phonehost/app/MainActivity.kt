@@ -1,8 +1,10 @@
 package com.phonehost.app
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -12,7 +14,14 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.view.View
-import android.widget.*
+import android.view.ViewGroup
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.Switch
+import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
@@ -22,32 +31,54 @@ import java.net.NetworkInterface
 class MainActivity : AppCompatActivity() {
 
     private lateinit var status: TextView
-    private lateinit var files: TextView
+    private lateinit var filesView: TextView
     private lateinit var startBtn: Button
     private lateinit var portEdit: EditText
     private val handler = Handler(Looper.getMainLooper())
 
     private val filePicker = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) Thread {
-            val n = SiteManager.importFiles(this, uris)
-            runOnUiThread { toast("$n file(s) add hui"); refresh() }
-        }.start()
+        if (uris.isNotEmpty()) {
+            Thread {
+                val n = SiteManager.importFiles(this, uris)
+                runOnUiThread {
+                    toast("$n file(s) added")
+                    refresh()
+                }
+            }.start()
+        }
     }
 
     private val zipPicker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) Thread {
-            val msg = try { "ZIP import done (${SiteManager.importZip(this, uri)} files)" }
-            catch (e: Exception) { "ZIP error: ${e.message}" }
-            runOnUiThread { toast(msg); refresh() }
-        }.start()
+        if (uri != null) {
+            Thread {
+                val msg = try {
+                    "ZIP imported (" + SiteManager.importZip(this, uri) + " files)"
+                } catch (e: Exception) {
+                    "ZIP error: " + e.message
+                }
+                runOnUiThread {
+                    toast(msg)
+                    refresh()
+                }
+            }.start()
+        }
     }
 
     private val notifPerm = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
+    private val ticker = object : Runnable {
+        override fun run() {
+            refresh()
+            handler.postDelayed(this, 2000)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         SiteManager.ensureDefault(this)
-        if (Build.VERSION.SDK_INT >= 33) notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+        if (Build.VERSION.SDK_INT >= 33) {
+            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
         setContentView(buildUi())
         refresh()
     }
@@ -62,103 +93,108 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacks(ticker)
     }
 
-    private val ticker = object : Runnable {
-        override fun run() { refresh(); handler.postDelayed(this, 2000) }
-    }
-
     // ---------- UI ----------
     private fun buildUi(): View {
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(16), dp(16), dp(16), dp(32))
-        }
-        root.addView(title("PhoneHost"))
-        root.addView(text("Apne phone se apni site host karo."))
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.setPadding(dp(16), dp(16), dp(16), dp(32))
 
-        // --- Server ---
+        root.addView(heading("PhoneHost"))
+        root.addView(label("Host your own website from your phone."))
+
+        // 1. Server
         root.addView(section("1. Server"))
-        status = text("")
+        status = label("")
         root.addView(status)
-        portEdit = edit("Port (1024-65535)", Prefs.port(this).toString()).apply { inputType = InputType.TYPE_CLASS_NUMBER }
+        portEdit = field("Port (1024-65535)", Prefs.port(this).toString())
+        portEdit.inputType = InputType.TYPE_CLASS_NUMBER
         root.addView(portEdit)
-        startBtn = button("Start") { toggleServer() }
+        startBtn = action("Start") { toggleServer() }
         root.addView(startBtn)
-        root.addView(button("Browser me site kholo") {
-            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://localhost:${Prefs.port(this)}")))
+        root.addView(action("Open site in browser") {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("http://localhost:" + Prefs.port(this))))
         })
-        val sw = Switch(this).apply {
-            text = "Phone restart hone par auto-start"
-            isChecked = Prefs.autoStart(this@MainActivity)
-            setOnCheckedChangeListener { _, v -> Prefs.setAutoStart(this@MainActivity, v) }
-        }
+        val sw = Switch(this)
+        sw.text = "Auto-start after phone reboot"
+        sw.isChecked = Prefs.autoStart(this)
+        sw.setOnCheckedChangeListener { _, checked -> Prefs.setAutoStart(this, checked) }
         root.addView(sw)
 
-        // --- Site files ---
+        // 2. Site files
         root.addView(section("2. Site files"))
-        root.addView(button("Files upload karo") { filePicker.launch(arrayOf("*/*")) })
-        root.addView(button("Site ZIP upload karo (poori site replace)") { zipPicker.launch(arrayOf("application/zip", "application/x-zip-compressed", "*/*")) })
-        root.addView(button("Site clear karo") { SiteManager.clear(this); refresh() })
-        files = text("")
-        root.addView(files)
+        root.addView(action("Upload files") { filePicker.launch(arrayOf("*/*")) })
+        root.addView(action("Upload site ZIP (replaces whole site)") { zipPicker.launch(arrayOf("*/*")) })
+        root.addView(action("Clear site") {
+            SiteManager.clear(this)
+            refresh()
+        })
+        filesView = label("")
+        root.addView(filesView)
 
-        // --- 24x7 ---
+        // 3. 24x7
         root.addView(section("3. 24x7 mode"))
-        root.addView(text("Charger lagao, battery optimization band karo. Xiaomi/Oppo/Vivo me 'Autostart' aur 'No restrictions' bhi on karo."))
-        root.addView(button("Battery optimization off karo") { requestIgnoreBattery() })
-        root.addView(button("App settings kholo") {
-            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        root.addView(label("Keep the phone charging and turn off battery optimization. On Xiaomi/Oppo/Vivo also enable Autostart and set Battery to No restrictions."))
+        root.addView(action("Turn off battery optimization") { requestIgnoreBattery() })
+        root.addView(action("Open app settings") {
+            startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + packageName)))
         })
 
-        // --- Public URL ---
+        // 4. Public URL
         root.addView(section("4. Public URL (Cloudflare Tunnel via Termux)"))
-        root.addView(text(
-            "Pehli baar setup:\n" +
-            "a) Termux (F-Droid) install karo.\n" +
-            "b) Termux me ye chalao:\n   echo 'allow-external-apps=true' >> ~/.termux/termux.properties\n" +
-            "c) Termux band karke dobara kholo, aur Android Settings > Apps > PhoneHost > Permissions me 'Run commands in Termux' allow karo.\n" +
-            "d) Neeche 'Termux setup' dabao."
+        root.addView(label(
+            "First-time setup:\n" +
+            "a) Install Termux from F-Droid.\n" +
+            "b) In Termux run:\n   echo 'allow-external-apps=true' >> ~/.termux/termux.properties\n" +
+            "c) Close Termux fully and reopen it. Then in Android Settings > Apps > PhoneHost > Permissions, allow 'Run commands in Termux'.\n" +
+            "d) Tap 'Termux setup' below."
         ))
-        root.addView(button("Termux setup (python + cloudflared)") { termux(TermuxBridge.SETUP_CMD) })
-        val tokenEdit = edit("Cloudflare tunnel token (optional, apne domain ke liye)", Prefs.token(this))
+        root.addView(action("Termux setup (python + cloudflared)") { termux(TermuxBridge.SETUP_CMD) })
+        val tokenEdit = field("Cloudflare tunnel token (optional, for your own domain)", Prefs.token(this))
         root.addView(tokenEdit)
-        root.addView(button("Public tunnel start karo") {
+        root.addView(action("Start public tunnel") {
             Prefs.setToken(this, tokenEdit.text.toString().trim())
             termux(TermuxBridge.tunnelCmd(Prefs.port(this), Prefs.token(this)))
-            toast("Termux me trycloudflare.com wala URL dikhega")
+            toast("The trycloudflare.com URL will appear in Termux")
         })
-        root.addView(text("Token khali = free random URL (https://xyz.trycloudflare.com). Token ho = aapka apna domain (Cloudflare Zero Trust > Tunnels se token lo)."))
+        root.addView(label("No token = free random URL (https://xyz.trycloudflare.com). With a token = your own domain (get it from Cloudflare Zero Trust > Tunnels)."))
 
-        // --- Python ---
+        // 5. Python
         root.addView(section("5. Python / Termux command"))
-        val cmdEdit = edit("Command", Prefs.termuxCmd(this))
+        val cmdEdit = field("Command", Prefs.termuxCmd(this))
         root.addView(cmdEdit)
-        root.addView(button("Termux me chalao") {
+        root.addView(action("Run in Termux") {
             Prefs.setTermuxCmd(this, cmdEdit.text.toString())
             termux(cmdEdit.text.toString())
         })
 
-        // --- Router guide ---
+        // 6. Router guide
         root.addView(section("6. Port forwarding (Wi-Fi router)"))
-        root.addView(text(routerGuide()))
+        root.addView(label(routerGuide()))
 
-        // --- Update ---
+        // 7. Update
         root.addView(section("7. Update"))
-        root.addView(text("Version: ${BuildConfig.VERSION_NAME}"))
-        root.addView(button("Update check karo") { checkUpdate() })
+        root.addView(label("Version: " + BuildConfig.VERSION_NAME))
+        root.addView(action("Check for updates") { checkUpdate() })
 
-        return ScrollView(this).apply { addView(root) }
+        val scroll = ScrollView(this)
+        scroll.addView(root)
+        return scroll
     }
 
     private fun refresh() {
         val ip = localIp()
         val port = Prefs.port(this)
-        status.text = if (ServerService.running) {
-            "● RUNNING\nLocal: http://localhost:$port\nWi-Fi: http://${ip ?: "?"}:$port\nRequests served: ${WebServer.requestCount}"
+        if (ServerService.running) {
+            status.text = "RUNNING\nLocal: http://localhost:" + port +
+                "\nWi-Fi: http://" + (ip ?: "?") + ":" + port +
+                "\nRequests served: " + WebServer.requestCount
+            startBtn.text = "Stop"
         } else {
-            "○ STOPPED" + (ServerService.lastError?.let { "\n$it" } ?: "")
+            val err = ServerService.lastError
+            status.text = "STOPPED" + (if (err != null) "\n" + err else "")
+            startBtn.text = "Start"
         }
-        startBtn.text = if (ServerService.running) "Stop" else "Start"
-        files.text = SiteManager.list(this)
+        filesView.text = SiteManager.list(this)
     }
 
     // ---------- actions ----------
@@ -168,7 +204,10 @@ class MainActivity : AppCompatActivity() {
             stopService(i)
         } else {
             val p = portEdit.text.toString().toIntOrNull()
-            if (p == null || p !in 1024..65535) { toast("Port 1024-65535 ke beech daalo"); return }
+            if (p == null || p < 1024 || p > 65535) {
+                toast("Enter a port between 1024 and 65535")
+                return
+            }
             Prefs.setPort(this, p)
             ContextCompat.startForegroundService(this, i)
         }
@@ -177,25 +216,33 @@ class MainActivity : AppCompatActivity() {
 
     private fun requestIgnoreBattery() {
         val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-        if (pm.isIgnoringBatteryOptimizations(packageName)) { toast("Already off hai ✔"); return }
-        startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        if (pm.isIgnoringBatteryOptimizations(packageName)) {
+            toast("Already turned off")
+            return
+        }
+        startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + packageName)))
     }
 
     private fun termux(cmd: String) {
-        TermuxBridge.run(this, cmd)?.let { toast(it) }
+        val err = TermuxBridge.run(this, cmd)
+        if (err != null) toast(err)
     }
 
     private fun checkUpdate() {
-        toast("Check ho raha hai…")
+        toast("Checking...")
         UpdateChecker.check { r ->
             runOnUiThread {
-                val b = android.app.AlertDialog.Builder(this).setMessage(r.message)
-                if (r.downloadUrl != null) {
+                val b = AlertDialog.Builder(this)
+                b.setMessage(r.message)
+                val link = r.downloadUrl
+                if (link != null) {
                     b.setPositiveButton("Download APK") { _, _ ->
-                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(r.downloadUrl)))
+                        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
                     }
-                    b.setNegativeButton("Baad me", null)
-                } else b.setPositiveButton("OK", null)
+                    b.setNegativeButton("Later", null)
+                } else {
+                    b.setPositiveButton("OK", null)
+                }
                 b.show()
             }
         }
@@ -203,34 +250,83 @@ class MainActivity : AppCompatActivity() {
 
     private fun routerGuide(): String {
         val ip = localIp() ?: "<phone-ip>"
-        return "Agar Wi-Fi par ho:\n" +
-            "1. Phone ko router me fixed IP do (DHCP reservation): $ip\n" +
-            "2. Browser me router kholo (usually 192.168.1.1 ya 192.168.0.1).\n" +
-            "3. Port Forwarding / Virtual Server me jao.\n" +
-            "4. External port ${Prefs.port(this)} → Internal IP $ip, port ${Prefs.port(this)}, TCP.\n" +
-            "5. Apna public IP dekho (whatismyip.com) aur http://PUBLIC_IP:${Prefs.port(this)} try karo.\n\n" +
-            "Note: Mobile data (Jio/Airtel) par CGNAT hota hai, wahan port forwarding nahi chalta. Wahan upar wala Cloudflare Tunnel use karo."
+        val port = Prefs.port(this)
+        return "If you are on Wi-Fi:\n" +
+            "1. Give the phone a fixed IP in your router (DHCP reservation): " + ip + "\n" +
+            "2. Open your router page in a browser (usually 192.168.1.1 or 192.168.0.1).\n" +
+            "3. Go to Port Forwarding / Virtual Server.\n" +
+            "4. External port " + port + " -> Internal IP " + ip + ", port " + port + ", TCP.\n" +
+            "5. Find your public IP (whatismyip.com) and try http://PUBLIC_IP:" + port + "\n\n" +
+            "Note: mobile data (Jio/Airtel) uses CGNAT, so port forwarding does not work there. Use the Cloudflare Tunnel above."
     }
 
     // ---------- helpers ----------
-    private fun localIp(): String? = try {
-        NetworkInterface.getNetworkInterfaces().toList()
-            .flatMap { it.inetAddresses.toList() }
-            .firstOrNull { !it.isLoopbackAddress && it is Inet4Address && it.isSiteLocalAddress }
-            ?.hostAddress
-    } catch (e: Exception) { null }
-
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-    private fun toast(s: String) = Toast.makeText(this, s, Toast.LENGTH_LONG).show()
-
-    private fun title(s: String) = TextView(this).apply { text = s; textSize = 28f; setPadding(0, 0, 0, dp(4)) }
-    private fun section(s: String) = TextView(this).apply {
-        text = s; textSize = 18f; setPadding(0, dp(24), 0, dp(8))
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
+    private fun localIp(): String? {
+        return try {
+            val list = NetworkInterface.getNetworkInterfaces().toList()
+            var found: String? = null
+            for (ni in list) {
+                for (addr in ni.inetAddresses.toList()) {
+                    if (found == null && !addr.isLoopbackAddress && addr is Inet4Address && addr.isSiteLocalAddress) {
+                        found = addr.hostAddress
+                    }
+                }
+            }
+            found
+        } catch (e: Exception) {
+            null
+        }
     }
-    private fun text(s: String) = TextView(this).apply { text = s; textSize = 14f; setPadding(0, dp(4), 0, dp(4)) }
-    private fun edit(hint: String, value: String) = EditText(this).apply { this.hint = hint; setText(value); setSingleLine(true) }
-    private fun button(label: String, onClick: () -> Unit) = Button(this).apply {
-        text = label; isAllCaps = false; setOnClickListener { onClick() }
+
+    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+
+    private fun toast(s: String) {
+        Toast.makeText(this, s, Toast.LENGTH_LONG).show()
+    }
+
+    private fun full(): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+
+    private fun heading(s: String): TextView {
+        val t = TextView(this)
+        t.text = s
+        t.textSize = 28f
+        t.setPadding(0, 0, 0, dp(4))
+        return t
+    }
+
+    private fun section(s: String): TextView {
+        val t = TextView(this)
+        t.text = s
+        t.textSize = 18f
+        t.setTypeface(t.typeface, Typeface.BOLD)
+        t.setPadding(0, dp(24), 0, dp(8))
+        return t
+    }
+
+    private fun label(s: String): TextView {
+        val t = TextView(this)
+        t.text = s
+        t.textSize = 14f
+        t.setPadding(0, dp(4), 0, dp(4))
+        return t
+    }
+
+    private fun field(hintText: String, value: String): EditText {
+        val e = EditText(this)
+        e.hint = hintText
+        e.setText(value)
+        e.setSingleLine(true)
+        e.layoutParams = full()
+        return e
+    }
+
+    private fun action(labelText: String, onClick: () -> Unit): Button {
+        val b = Button(this)
+        b.text = labelText
+        b.isAllCaps = false
+        b.layoutParams = full()
+        b.setOnClickListener { onClick() }
+        return b
     }
 }
