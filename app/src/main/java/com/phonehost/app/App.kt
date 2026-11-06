@@ -15,10 +15,10 @@ class App : Application() {
             try {
                 val sw = StringWriter()
                 e.printStackTrace(PrintWriter(sw))
-                val trace = ("Thread: ${t.name}\n$sw").take(8000)
+                val trace = ("Thread: " + t.name + "\n" + sw.toString()).take(8000)
                 val i = Intent(this, CrashActivity::class.java)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-                    .putExtra("trace", trace)
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                i.putExtra("trace", trace)
                 startActivity(i)
             } catch (x: Throwable) {
                 old?.uncaughtException(t, e)
@@ -27,4 +27,4 @@ class App : Application() {
             exitProcess(10)
         }
     }
-}￼Enter
+}
