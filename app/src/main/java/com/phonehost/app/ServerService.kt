@@ -46,7 +46,7 @@ class ServerService : Service() {
         SiteManager.ensureDefault(this)
         try {
             server?.stop()
-            val s = WebServer(SiteManager.www(this), port)
+            val s = WebServer(SiteManager.www(this), port, applicationContext)
             s.start()
             server = s
             running = true
