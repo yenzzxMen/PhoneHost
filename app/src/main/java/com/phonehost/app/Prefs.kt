@@ -7,7 +7,10 @@ object Prefs {
 
     private fun sp(c: Context) = c.getSharedPreferences("phonehost", Context.MODE_PRIVATE)
 
-    fun port(c: Context): Int = sp(c).getInt("port", 8080)
+    fun port(c: Context): Int {
+        val p = sp(c).getInt("port", 8080)
+        return if (p == PHP_PORT) 8080 else p
+    }
     fun setPort(c: Context, v: Int) = sp(c).edit().putInt("port", v).apply()
 
     fun autoStart(c: Context): Boolean = sp(c).getBoolean("autostart", false)
@@ -24,6 +27,9 @@ object Prefs {
 
     fun publicUrl(c: Context): String = sp(c).getString("public_url", "") ?: ""
     fun setPublicUrl(c: Context, v: String) = sp(c).edit().putString("public_url", v).apply()
+
+    fun askedTermux(c: Context): Boolean = sp(c).getBoolean("asked_termux", false)
+    fun setAskedTermux(c: Context, v: Boolean) = sp(c).edit().putBoolean("asked_termux", v).apply()
 
     fun syncToken(c: Context): String {
         val s = sp(c)
