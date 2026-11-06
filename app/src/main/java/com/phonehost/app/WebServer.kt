@@ -25,6 +25,10 @@ class WebServer(root: File, port: Int, private val appCtx: Context) : NanoHTTPD(
 
     private val rootCanon: File = root.canonicalFile
 
+    /** PHP mode is on if the switch is ON or the site has an index.php. */
+    private fun needsPhp(): Boolean =
+        Prefs.phpMode(appCtx) || File(rootCanon, "index.php").exists()
+
     override fun serve(session: IHTTPSession): Response {
         requestCount++
         val path = session.uri.substringBefore('?')
@@ -34,7 +38,7 @@ class WebServer(root: File, port: Int, private val appCtx: Context) : NanoHTTPD(
         if (path.split('/').any { it.length > 1 && it.startsWith(".") }) return forbidden()
         if (denied(path)) return forbidden()
 
-        if (Prefs.phpMode(appCtx)) return proxy(session)
+        if (needsPhp()) return proxy(session)
 
         if (session.method != Method.GET && session.method != Method.HEAD) {
             return newFixedLengthResponse(Response.Status.METHOD_NOT_ALLOWED, MIME_PLAINTEXT, "405 Method Not Allowed")
@@ -46,10 +50,10 @@ class WebServer(root: File, port: Int, private val appCtx: Context) : NanoHTTPD(
         if (file.isDirectory) {
             file = File(file, "index.html")
         }
-        if (file.extension.lowercase() == "php" || (!file.exists() && File(rootCanon, "index.php").exists() && path == "/")) {
+        if (file.extension.lowercase() == "php") {
             return newFixedLengthResponse(
                 Response.Status.NOT_IMPLEMENTED, "text/html",
-                "<h2>This site needs PHP</h2><p>Open PhoneHost, go to the PHP section, turn on PHP mode and start the PHP server.</p>"
+                "<h2>This site needs PHP</h2><p>Open PhoneHost, go to PHP section, turn on PHP mode and start the PHP server.</p>"
             )
         }
         if (!file.exists() || !file.isFile) {
@@ -113,6 +117,16 @@ class WebServer(root: File, port: Int, private val appCtx: Context) : NanoHTTPD(
         return newFixedLengthResponse(Response.Status.OK, "application/zip", FileInputStream(tmp), tmp.length())
     }
 
+    /** Adds every Set-Cookie header (NanoHTTPD keeps only one per name with addHeader). */
+    private fun addCookie(resp: Response, value: String) {
+        try {
+            val m = resp.javaClass.getMethod("addCookieHeader", String::class.java)
+            m.invoke(resp, value)
+        } catch (e: Exception) {
+            resp.addHeader("Set-Cookie", value)
+        }
+    }
+
     /** Forwards the request to the PHP server running in Termux. */
     private fun proxy(session: IHTTPSession): Response {
         try {
@@ -125,8 +139,13 @@ class WebServer(root: File, port: Int, private val appCtx: Context) : NanoHTTPD(
             c.requestMethod = session.method.name
             for ((k, v) in session.headers) {
                 if (k == "host" || k == "connection" || k == "content-length" || k == "accept-encoding") continue
+                if (k == "remote-addr" || k == "http-client-ip") continue
                 c.setRequestProperty(k, v)
             }
+            val host = session.headers["host"]
+            if (host != null) c.setRequestProperty("X-Forwarded-Host", host)
+            c.setRequestProperty("X-Forwarded-Proto", session.headers["x-forwarded-proto"] ?: "http")
+
             val len = session.headers["content-length"]?.toIntOrNull() ?: 0
             if (len > 0 && (session.method == Method.POST || session.method == Method.PUT)) {
                 c.doOutput = true
@@ -155,13 +174,19 @@ class WebServer(root: File, port: Int, private val appCtx: Context) : NanoHTTPD(
                 if (k == null) continue
                 val lk = k.lowercase()
                 if (lk == "content-length" || lk == "transfer-encoding" || lk == "content-type" || lk == "connection") continue
+                if (lk == "set-cookie") {
+                    for (v in vs) addCookie(resp, v)
+                    continue
+                }
                 if (vs.isNotEmpty()) resp.addHeader(k, vs[vs.size - 1])
             }
             return resp
         } catch (e: Exception) {
             return newFixedLengthResponse(
                 CodeStatus(502, "Bad Gateway"), "text/html",
-                "<h2>PHP server is not running</h2><p>Open PhoneHost, go to the PHP section and tap Start PHP server. Keep Termux running.</p>"
+                "<h2>PHP server is not running</h2>" +
+                    "<p>Open PhoneHost and tap Start PHP server (section 4). Keep Termux running.</p>" +
+                    "<p>Details: " + e.javaClass.simpleName + ": " + e.message + "</p>"
             )
         }
     }
